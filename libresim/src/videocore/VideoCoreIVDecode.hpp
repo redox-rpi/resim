@@ -6,6 +6,8 @@
 #include "videocore/VideoCoreIVRegisterFile.hpp"
 #include "VideoCoreIVExecute.hpp"
 
+#include <cstdlib>
+
 int32_t extendSigned(int32_t value, uint32_t msbMask) {
 	if ((value & msbMask) != 0) {
 		return value | ~(msbMask | (msbMask - 1));
@@ -62,6 +64,9 @@ public:
 			// TODO: HALT?
 		} else if (inst == 0x0001) {
 			// NOP
+		} else if (inst == 0x0002) {
+			// Sleep. Use this to exit the emulator.
+			exit(registers.getRegister(0));
 		} else if (inst == 0x0004) {
 			execute.unk0004();
 			// TODO
@@ -131,7 +136,8 @@ public:
 			bool store = (inst & 0x0200) != 0;
 			unsigned int rd = inst & 0xf;
 			int32_t offset = (inst >> 4) & 0x1f;
-			offset = extendSigned(offset, 0x10);
+                        // FIXME: I think this is an unsigned offset?
+			// offset = extendSigned(offset, 0x10);
 			offset *= 4;
 			execute.loadStoreOffset(store, WIDTH_U32, rd, VC_SP, offset);
 		} else if ((inst & 0xf800) == 0x0800) {
@@ -174,15 +180,31 @@ public:
 			log->debug("vc4", "offset: %08x", offset);
 			execute.blImm(offset * 2, 4);
 			return;
-		} else if ((inst1 & 0xfc00) == 0xc000 && (inst2 & 0x0060) == 0x0000) {
-			unsigned int op = (inst1 >> 5) & 0x1f;
+		} else if ((inst1 & 0xff80) == 0xc480 && (inst2 & 0x20) == 0) {
+			unsigned int cond = (inst2 >> 7) & 0xf;
+			unsigned int rd = inst1 & 0x1f;
+			unsigned int ra = (inst2 >> 11) & 0x1f;
+			bool aUnsigned = (inst1 & 0x40) != 0;
+			bool bUnsigned = (inst1 & 0x20) != 0;
+			bool immediate = (inst2 & 0x40) != 0;
+			if (immediate) {
+				execute.divi(cond, rd, ra,
+                                        extendSigned(inst2 & 0x3f, 0x20),
+                                        aUnsigned, bUnsigned);
+			} else {
+				execute.div(cond, rd, ra, inst2 & 0x1f,
+                                        aUnsigned, bUnsigned);
+			}
+			// TODO
+		} else if ((inst1 & 0xf800) == 0xc000 && (inst2 & 0x0060) == 0x0000) {
+			unsigned int op = (inst1 >> 5) & 0x3f;
 			unsigned int rd = inst1 & 0x1f;
 			unsigned int ra = (inst2 >> 11) & 0x1f;
 			unsigned int rb = inst2 & 0x1f;
 			unsigned int cond = (inst2 >> 7) & 0xf;
 			execute.binaryOp(cond, op, rd, ra, rb);
-		} else if ((inst1 & 0xfc00) == 0xc000 && (inst2 & 0x0040) == 0x0040) {
-			unsigned int op = (inst1 >> 5) & 0x1f;
+		} else if ((inst1 & 0xf800) == 0xc000 && (inst2 & 0x0040) == 0x0040) {
+			unsigned int op = (inst1 >> 5) & 0x3f;
 			unsigned int rd = inst1 & 0x1f;
 			unsigned int ra = (inst2 >> 11) & 0x1f;
 			int32_t imm = inst2 & 0x3f;
@@ -199,6 +221,8 @@ public:
 			unsigned int rd = inst1 & 0x1f;
 			execute.loadStoreOffset(store, format, rd, rb,
 					extendSigned(inst2, 0x8000));
+			if (!store && rd == VC_PC)
+				return;
 		} else if ((inst1 & 0xff00) == 0xa000 && (inst2 & 0x0060) == 0x0000) {
 			bool store = (inst1 & 0x20) != 0;
 			unsigned int format = (inst1 >> 6) & 0x3;
@@ -207,6 +231,18 @@ public:
 			unsigned int rb = inst2 & 0x1f;
 			unsigned int cond = (inst2 >> 7) & 0xf;
 			execute.loadStoreIndexed(store, format, rd, ra, rb, cond);
+			if (!store && rd == VC_PC)
+				return;
+		} else if ((inst1 & 0xff00) == 0xa000 && (inst2 & 0x0040) == 0x0040) {
+			bool store = (inst1 & 0x20) != 0;
+			unsigned int format = (inst1 >> 6) & 0x3;
+			unsigned int rd = inst1 & 0x1f;
+			unsigned int ra = (inst2 >> 11) & 0x1f;
+			unsigned int offset = inst2 & 0x3f;
+			unsigned int cond = (inst2 >> 7) & 0xf;
+			execute.loadStoreOffset(store, format, rd, ra, extendSigned (offset, 0x20), cond);
+			if (!store && rd == VC_PC)
+				return;
 		} else if ((inst1 & 0xfe00) == 0xa200) {
 			bool store = (inst1 & 0x20) != 0;
 			unsigned int rd = inst1 & 0x1f;
@@ -217,6 +253,8 @@ public:
 			unsigned int format = (inst1 >> 6) & 0x3;
 			// TODO: Offset scale?
 			execute.loadStoreOffset(store, format, rd, rs, offset);
+			if (!store && rd == VC_PC)
+				return;
 		} else if ((inst1 & 0xfe00) == 0xa400) {
 			bool store = (inst1 & 0x20) != 0;
 			unsigned int rd = inst1 & 0x1f;
@@ -227,10 +265,14 @@ public:
 			bool predecrement = !postincrement;
 			execute.loadStoreOffset(store, format, rd, rs, 0, cond,
 					postincrement, predecrement);
+			if (!store && rd == VC_PC)
+				return;
 		} else if ((inst1 & 0xfc00) == 0xb000) {
 			unsigned int op = (inst1 >> 5) & 0x1f;
 			unsigned int rd = inst1 & 0x1f;
 			unsigned int imm = inst2;
+			if (imm & 0x8000)
+				imm |= ~0xffff;
 			execute.binaryOpImm(14, op, rd, rd, imm);
 		} else if ((inst1 & 0xfc00) == 0xb400) {
 			unsigned int rd = inst1 & 0x1f;
@@ -269,21 +311,6 @@ public:
 					return;
 				}
 			}
-		} else if ((inst1 & 0xff80) == 0xc480 && (inst2 & 0x20) == 0) {
-			unsigned int cond = (inst2 >> 7) & 0xf;
-			unsigned int rd = inst1 & 0x1f;
-			unsigned int ra = (inst2 >> 11) & 0x1f;
-			unsigned int rb = inst2 & 0x1f;
-			bool aUnsigned = (inst1 & 0x40) != 0;
-			bool bUnsigned = (inst1 & 0x20) != 0;
-			bool immediate = (inst2 & 0x40) != 0;
-			if (immediate) {
-				// TODO
-				throw std::runtime_error("div with immediate unimplemented!");
-			} else {
-				execute.div(cond, rd, ra, rb, aUnsigned, bUnsigned);
-			}
-			// TODO
 		} else if ((inst1 & 0xffe0) == 0xc5e0 && (inst2 & 0x60) == 0x0) {
 			unsigned int cond = (inst2 >> 7) & 0xf;
 			unsigned int rd = inst1 & 0x1f;
@@ -336,6 +363,8 @@ public:
 			unsigned int imm = inst3;
 			imm = (imm << 16) | inst2;
 			execute.binaryOpImm(op, rd, imm);
+                        if (rd == VC_PC)
+                                return;
 		} else if ((inst1 & 0xffe0) == 0xe500) {
 			unsigned int rd = inst1 & 0x1f;
 			unsigned int imm = inst3;
@@ -351,12 +380,26 @@ public:
 			offset = extendSigned(offset, 0x4000000);
 			log->debug("vc4", "offset: %08x", offset);
 			execute.loadStoreOffset(store, format, rd, rs, offset);
+			if (!store && rd == VC_PC)
+				return;
+		} else if ((inst1 & 0xff00) == 0xe700 && (inst3 & 0xf800) == 0xf800) {
+			bool store = (inst1 & 0x20) != 0;
+			unsigned int format = (inst1 >> 6) & 0x3;
+			unsigned int rd = inst1 & 0x1f;
+			int offset = inst3 & 0x7ff;
+			offset = (offset << 16) | inst2;
+			offset = extendSigned(offset, 0x4000000);
+			execute.loadStoreOffset(store, format, rd, VC_PC, offset);
+			if (!store && rd == VC_PC)
+				return;
 		} else if ((inst1 & 0xfc00) == 0xec00) {
 			unsigned int rs = (inst1 >> 5) & 0x1f;
 			unsigned int rd = inst1 & 0x1f;
 			unsigned int imm = inst3;
 			imm = (imm << 16) | inst2;
 			execute.binaryOpImm(14, OP_ADD, rd, rs, imm);
+                        if (rd == VC_PC)
+                                return;
 		} else {
 			throw std::runtime_error("scalar48: Unsupported instruction.");
 			// TODO

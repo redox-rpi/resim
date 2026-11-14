@@ -16,8 +16,9 @@ scripts for the whole toolchain: [redox-rpi/vc4-toolchain](https://github.com/re
 | Michael Bishop ([cleverca22/resim](https://github.com/cleverca22/resim)) | 2020 | `switch`, `abs`, `mulhd.uu` and more for running the boot ROM; only these three taken here, reworked |
 | redox-rpi | 2026 | the changes below |
 
-A comparison of all forks is in rpi-open-firmware
-[docs/forks.md](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/forks.md).
+The other forks (andryblack, Bin-Samuel) are plain copies of itszor's.
+Status of all sources redox-rpi uses: rpi-open-firmware
+[docs/sources.md](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/sources.md).
 
 ## Our changes
 

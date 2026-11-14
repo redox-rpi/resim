@@ -1,3 +1,5 @@
+#include <cassert>
+#include <cstring>
 #include <cstdlib>
 
 #include "Processor.hpp"

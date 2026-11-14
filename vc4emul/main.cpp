@@ -1,3 +1,4 @@
+#include <cstdlib>
 
 #include "Processor.hpp"
 #include "Device.hpp"
@@ -65,6 +66,24 @@ static uintptr_t parse_uintptr(const char* str,bool& ok) {
 static std::vector<unsigned char> read_all(std::ifstream& is) {
 	std::vector<unsigned char> buffer(std::istreambuf_iterator<char>(is), {});
 	return buffer;
+}
+
+static unsigned long long steps;
+#include <map>
+static std::map<uint32_t, unsigned long long> prof;
+static void print_prof(void) {
+	const char *f = getenv("VC4EMUL_PROF");
+	if (!f) return;
+	FILE *o = fopen(f, "w");
+	if (!o) return;
+	for (auto &e : prof)
+		fprintf(o, "%08x %llu\n", e.first, e.second);
+	fclose(o);
+}
+static void print_steps(void) {
+	print_prof();
+	if (getenv("VC4EMUL_COUNT"))
+		fprintf(stderr, "insns: %llu\n", steps);
 }
 
 int main(int argc, char **argv) {
@@ -167,11 +186,21 @@ int main(int argc, char **argv) {
 	}
 	// Start the simulation
 	log.info("", "Starting the simulation...");
+	std::atexit(print_steps);
 	try {
+		if (getenv("VC4EMUL_PROF")) {
+			while (true) {
+				prof[(uint32_t)processor->getRegister("pc")]++;
+				processor->run(1);
+				steps++;
+			}
+		}
 		while (true) {
-			processor->run(1000);
+			processor->run(100);
+			steps += 100;
 		}
 	} catch (const std::exception &e) {
+		print_steps(); steps = 0;
 		std::cerr << "Exception: " << e.what() << std::endl;
 		const std::vector<std::string> &registers = processor->getRegisterList();
 		for (auto it = registers.begin(); it != registers.end(); it++) {

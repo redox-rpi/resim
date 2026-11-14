@@ -83,8 +83,10 @@ public:
 			return;
 		} else if ((inst & 0xffe0) == 0x0080) {
 			execute.tbb(inst & 0x1f);
+			return;
 		} else if ((inst & 0xffe0) == 0x00a0) {
 			execute.tbh(inst & 0x1f);
+			return;
 		} else if ((inst & 0xffe0) == 0x00e0) {
 			execute.cpuid(inst & 0x1f);
 		/*} else if ((inst & 0xf800) == 0x5000) {

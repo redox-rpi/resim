@@ -165,14 +165,19 @@ public:
 		registers.setRegister(VC_PC, registers.getRegister(reg));
 	}
 
+	/* switch.b / switch: a table of byte or halfword entries follows the
+	   2-byte instruction; the branch goes to table + 2 * entry[reg]
+	   (after Michael Bishop, cleverca22/resim 273d62f) */
 	void tbb(unsigned int reg) {
-		// TODO
-		throw std::runtime_error("Unsupported instruction.");
+		uint32_t table = registers.getRegister(VC_PC) + 2;
+		uint32_t entry = memory->readByte(table + registers.getRegister(reg));
+		registers.setRegister(VC_PC, table + entry * 2);
 	}
 
 	void tbh(unsigned int reg) {
-		// TODO
-		throw std::runtime_error("Unsupported instruction.");
+		uint32_t table = registers.getRegister(VC_PC) + 2;
+		uint32_t entry = memory->readHalfWord(table + registers.getRegister(reg) * 2);
+		registers.setRegister(VC_PC, table + entry * 2);
 	}
 
 	void cpuid(unsigned int reg) {
@@ -595,6 +600,12 @@ private:
 				break;
 			case OP_NEG:
 				registers.setRegister(rd, -(int32_t)b);
+				break;
+			case OP_ABS: /* unary on the second operand, as neg */
+				registers.setRegister(rd, (int32_t)b < 0 ? -b : b);
+				break;
+			case OP_MULHD_UU: /* after cleverca22/resim a6ad283 */
+				registers.setRegister(rd, ((uint64_t)a * (uint64_t)b) >> 32);
 				break;
 			case OP_LSR:
 				registers.setRegister(rd, a >> b);

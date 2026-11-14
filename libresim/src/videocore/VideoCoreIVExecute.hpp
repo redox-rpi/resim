@@ -562,6 +562,9 @@ private:
 				// TODO: Signed?
 				registers.setRegister(rd, a < b ? a : b);
 				break;
+			case OP_BCHG:
+				registers.setRegister(rd, a ^ (1 << b));
+				break;
 			case OP_ADDS2:
 				registers.setRegister(rd, a + b * 2);
 				break;
@@ -604,11 +607,7 @@ private:
 				registers.setRegister(rd, a << b);
 				break;
 			case OP_ASR:
-				if ((a & 0x80000000) == 0) {
-					registers.setRegister(rd, a >> b);
-				} else {
-					registers.setRegister(rd, (a >> b) || (0xffffffff << (32 - b)));
-				}
+				registers.setRegister(rd, (uint32_t)((int32_t)a >> (b & 31)));
 				break;
 			case OP_ADDSCALE_5:
 				registers.setRegister(rd, a + (b << 5));

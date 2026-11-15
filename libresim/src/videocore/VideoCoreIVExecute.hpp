@@ -44,7 +44,32 @@ enum BinaryOp {
 	OP_LSL,
 	OP_BREV,
 	OP_ASR,
-	OP_ABS
+	OP_ABS,
+	OP_MULHD_SS,
+	OP_MULHD_SU,
+	OP_MULHD_US,
+	OP_MULHD_UU,
+	OP_DIV_SS,
+	OP_DIV_SU,
+	OP_DIV_US,
+	OP_DIV_UU,
+	OP_ADDS,
+	OP_SUBS,
+	OP_SHLS,
+	OP_CLIPSH,
+	OP_ADDSCALE_5,
+	OP_ADDSCALE_6,
+	OP_ADDSCALE_7,
+	OP_ADDSCALE_8,
+	OP_COUNT,
+	OP_SUBSCALE_1,
+	OP_SUBSCALE_2,
+	OP_SUBSCALE_3,
+	OP_SUBSCALE_4,
+	OP_SUBSCALE_5,
+	OP_SUBSCALE_6,
+	OP_SUBSCALE_7,
+	OP_SUBSCALE_8
 };
 
 enum LoadStoreWidth {
@@ -113,6 +138,11 @@ static unsigned int loadStoreSize(LoadStoreWidth format) {
 	}
 }
 
+union floatbits {
+  float f;
+  uint32_t u;
+};
+
 class VideoCoreIVExecute {
 public:
 	VideoCoreIVExecute(Memory *memory,
@@ -135,14 +165,19 @@ public:
 		registers.setRegister(VC_PC, registers.getRegister(reg));
 	}
 
+	/* switch.b / switch: a table of byte or halfword entries follows the
+	   2-byte instruction; the branch goes to table + 2 * entry[reg]
+	   (after Michael Bishop, cleverca22/resim 273d62f) */
 	void tbb(unsigned int reg) {
-		// TODO
-		throw std::runtime_error("Unsupported instruction.");
+		uint32_t table = registers.getRegister(VC_PC) + 2;
+		uint32_t entry = memory->readByte(table + registers.getRegister(reg));
+		registers.setRegister(VC_PC, table + entry * 2);
 	}
 
 	void tbh(unsigned int reg) {
-		// TODO
-		throw std::runtime_error("Unsupported instruction.");
+		uint32_t table = registers.getRegister(VC_PC) + 2;
+		uint32_t entry = memory->readHalfWord(table + registers.getRegister(reg) * 2);
+		registers.setRegister(VC_PC, table + entry * 2);
 	}
 
 	void cpuid(unsigned int reg) {
@@ -309,43 +344,48 @@ public:
 		if (!checkCond(cond)) {
 			return;
 		}
-		uint32_t value = registers.getRegister(ra);
+                floatbits valfb;
+                valfb.u = registers.getRegister(ra);
 		switch (op) {
 			case OP_FLOOR:
-				value = floor(*(float*)&value);
+				valfb.f = floorf(valfb.f);
 				break;
 			case OP_FTRUNC:
-				value = (int32_t)*(float*)&value;
+				valfb.u = (int32_t) valfb.f;
 				break;
 			case OP_FLTS:
-				*(float*)&value = (int32_t)value;
+				valfb.f = (int32_t) valfb.u;
 				break;
 			case OP_FLTU:
-				*(float*)&value = value;
+				valfb.f = valfb.u;
 				break;
 		}
 		switch (op) {
 			case OP_FLOOR:
 			case OP_FTRUNC: {
 				if (shift > 0) {
-					value <<= shift;
+					valfb.u <<= shift;
 				} else {
-					value >>= -shift;
+					valfb.u >>= -shift;
 				}
 				break;
 			}
 			case OP_FLTS:
 			case OP_FLTU:
-				log->debug("vc4exec", "shift %f >> %d", *(float*)&value, shift);
-				int32_t exponent = (value >> 23) & 0xff;
-				assert(exponent - shift < 0x100 && exponent - shift >= 0);
+				log->debug("vc4exec", "shift %f >> %d",
+                                           valfb.f, shift);
+				int32_t exponent = (valfb.u >> 23) & 0xff;
+				assert(exponent - shift < 0x100
+                                       && exponent - shift >= 0);
 				exponent = exponent - shift;
-				value = (value & 0x807fffff) | (exponent << 23);
-				log->debug("vc4exec", "result %f", *(float*)&value);
+				valfb.u = (valfb.u & 0x807fffff)
+                                          | (exponent << 23);
+				log->debug("vc4exec", "result %f", valfb.f);
 				break;
 		}
-		log->debug("vc4exec", "floatConv, result %08x/%d/%f", value, value, *(float*)&value);
-		registers.setRegister(rd, value);
+		log->debug("vc4exec", "floatConv, result %08x/%d/%f", valfb.u,
+                           valfb.u, valfb.f);
+		registers.setRegister(rd, valfb.u);
 	}
 
 	void floatOp(unsigned int cond, FloatOp op, int rd, int ra, int rb) {
@@ -384,13 +424,11 @@ public:
 		registers.setRegister(rd, result);
 	}
 
-	void div(unsigned int cond, int rd, int ra, int rb, bool aUnsigned, bool bUnsigned) {
+	void divi(unsigned int cond, int rd, int ra, uint32_t b, bool aUnsigned, bool bUnsigned) {
 		if (!checkCond(cond)) {
 			return;
 		}
-		log->debug("vc4exec", "div: r%d = r%d / r%d", rd, ra, rb);
 		uint32_t a = registers.getRegister(ra);
-		uint32_t b = registers.getRegister(rb);
 		if (b == 0) {
 			throw std::runtime_error("Division through 0!");
 		}
@@ -406,6 +444,11 @@ public:
 		}
 		registers.setRegister(rd, result);
 	}
+
+        void div(unsigned int cond, int rd, int ra, int rb, bool aUnsigned, bool bUnsigned) {
+		log->debug("vc4exec", "div: r%d = r%d / r%d", rd, ra, rb);
+                divi(cond, rd, ra, registers.getRegister(rb), aUnsigned, bUnsigned);
+        }
 
 	void unk0004() {
 		log->debug("vc4exec", "UNK0004");
@@ -458,7 +501,7 @@ private:
 		}
 	}
 	void doBinaryOp(unsigned int op, unsigned int rd, uint32_t a, uint32_t b) {
-		if (op >= 0x20) {
+		if (op >= 0x40) {
 			throw std::runtime_error("Invalid operation.");
 		}
 		log->debug("vc4exec", "Op: %d %08x %08x => r%d", op, a, b, rd);
@@ -490,6 +533,14 @@ private:
 			case OP_MVN:
 				registers.setRegister(rd, ~b);
 				break;
+                        case OP_ROR:
+                                b &= 31;
+                                if (b > 0)
+                                        registers.setRegister(rd,
+                                            (a >> b) | (a << (32 - b)));
+                                else
+                                        registers.setRegister(rd, a);
+                                break;
 			case OP_CMP:
 				registers.setRegister(VC_SR, compare(a, b) | (registers.getRegister(VC_SR) & ~0xf));
 				break;
@@ -516,6 +567,9 @@ private:
 				// TODO: Signed?
 				registers.setRegister(rd, a < b ? a : b);
 				break;
+			case OP_BCHG:
+				registers.setRegister(rd, a ^ (1 << b));
+				break;
 			case OP_ADDS2:
 				registers.setRegister(rd, a + b * 2);
 				break;
@@ -531,8 +585,27 @@ private:
 			case OP_ADDS16:
 				registers.setRegister(rd, a + b * 16);
 				break;
+			case OP_EXTS:
+				{
+					unsigned hibit = 1 << (b - 1);
+					unsigned mask = (1 << b) - 1;
+					if (a & hibit) {
+						registers.setRegister(rd,
+						  a | ~mask);
+					} else {
+						registers.setRegister(rd,
+						  a & mask);
+					}
+				}
+				break;
 			case OP_NEG:
 				registers.setRegister(rd, -(int32_t)b);
+				break;
+			case OP_ABS: /* unary on the second operand, as neg */
+				registers.setRegister(rd, (int32_t)b < 0 ? -b : b);
+				break;
+			case OP_MULHD_UU: /* after cleverca22/resim a6ad283 */
+				registers.setRegister(rd, ((uint64_t)a * (uint64_t)b) >> 32);
 				break;
 			case OP_LSR:
 				registers.setRegister(rd, a >> b);
@@ -545,41 +618,90 @@ private:
 				registers.setRegister(rd, a << b);
 				break;
 			case OP_ASR:
-				if ((a & 0x80000000) == 0) {
-					registers.setRegister(rd, a >> b);
-				} else {
-					registers.setRegister(rd, (a >> b) || (0xffffffff << (32 - b)));
-				}
+				registers.setRegister(rd, (uint32_t)((int32_t)a >> (b & 31)));
+				break;
+			case OP_ADDSCALE_5:
+				registers.setRegister(rd, a + (b << 5));
+				break;
+			case OP_ADDSCALE_6:
+				registers.setRegister(rd, a + (b << 6));
+				break;
+			case OP_ADDSCALE_7:
+				registers.setRegister(rd, a + (b << 7));
+				break;
+			case OP_ADDSCALE_8:
+				registers.setRegister(rd, a + (b << 8));
+				break;
+			case OP_SUBSCALE_1:
+				registers.setRegister(rd, a - (b << 1));
+				break;
+			case OP_SUBSCALE_2:
+				registers.setRegister(rd, a - (b << 2));
+				break;
+			case OP_SUBSCALE_3:
+				registers.setRegister(rd, a - (b << 3));
+				break;
+			case OP_SUBSCALE_4:
+				registers.setRegister(rd, a - (b << 4));
+				break;
+			case OP_SUBSCALE_5:
+				registers.setRegister(rd, a - (b << 5));
+				break;
+			case OP_SUBSCALE_6:
+				registers.setRegister(rd, a - (b << 6));
+				break;
+			case OP_SUBSCALE_7:
+				registers.setRegister(rd, a - (b << 7));
+				break;
+			case OP_SUBSCALE_8:
+				registers.setRegister(rd, a - (b << 8));
 				break;
 			default:
 				throw std::runtime_error("Unimplemented operation.");
 		}
 		log->debug("vc4exec", "Result: %08x", registers.getRegister(rd));
 	}
-	void doBinaryFloatOp(FloatOp op, unsigned int rd, uint32_t a, uint32_t b) {
-		float result;
+	void doBinaryFloatOp(FloatOp op, unsigned int rd, uint32_t ua,
+                             uint32_t ub) {
+                floatbits a, b;
+                a.u = ua;
+                b.u = ub;
+		floatbits result;
 		switch (op) {
 			case OP_FADD:
-				result = *(float*)&a + *(float*)&b;
-				registers.setRegister(rd, *(uint32_t*)&result);
+				result.f = a.f + b.f;
+				registers.setRegister(rd, result.u);
 				break;
 			case OP_FSUB:
-				result = *(float*)&a - *(float*)&b;
-				registers.setRegister(rd, *(uint32_t*)&result);
+				result.f = a.f - b.f;
+				registers.setRegister(rd, result.u);
 				break;
 			case OP_FDIV:
-				result = *(float*)&a / *(float*)&b;
-				registers.setRegister(rd, *(uint32_t*)&result);
+				result.f = a.f / b.f;
+				registers.setRegister(rd, result.u);
 				break;
 			case OP_FMUL:
-				result = *(float*)&a * *(float*)&b;
-				registers.setRegister(rd, *(uint32_t*)&result);
+				result.f = a.f * b.f;
+				registers.setRegister(rd, result.u);
 				break;
 			case OP_FCMP:
-				registers.setRegister(VC_SR, compareFloat(*(float*)&a, *(float*)&b)
-						| (registers.getRegister(VC_SR) & ~0xf));
+				registers.setRegister(VC_SR,
+                                    compareFloat(a.f, b.f)
+				    | (registers.getRegister(VC_SR) & ~0xf));
 				break;
-			default:
+			case OP_FABS:
+                                result.f = fabsf(b.f);
+                                registers.setRegister(rd, result.u);
+                                break;
+                        case OP_FMAX:
+                                result.f = fmaxf(a.f, b.f);
+                                registers.setRegister(rd, result.u);
+                                break;
+                        case OP_FMIN:
+                                result.f = fminf(a.f, b.f);
+                                registers.setRegister(rd, result.u);
+                                break;
+                        default:
 				throw std::runtime_error("Unimplemented float operation.");
 		}
 	}
@@ -623,6 +745,8 @@ private:
 			case COND_TRUE:
 				result = true;
 				break;
+			default:
+				throw std::runtime_error("Unsupported condition");
 		}
 		if (cond & 0x1) {
 			return !result;
@@ -636,10 +760,18 @@ private:
 	}
 
 	unsigned int compare(int32_t a, int32_t b) {
-		return cc((int64_t)a - (int64_t)b);
+		int status = cc((int64_t)a - (int64_t)b);
+                const unsigned int C = 2;
+                if ((uint32_t) a < (uint32_t) b)
+                  status |= C;
+                return status;
 	}
 	unsigned int compareAdd(int32_t a, int32_t b) {
-		return cc((int64_t)a + (int64_t)b);
+		int status = cc((int64_t)a + (int64_t)b);
+                const unsigned int C = 2;
+                if (((int64_t)a + (int64_t)b) & 0x100000000ull)
+                  status |= C;
+                return status;
 	}
 
 	unsigned int compareFloat(float a, float b) {
@@ -655,16 +787,13 @@ private:
 
 	unsigned int cc(int64_t result) {
 		log->debug("vc4exec", "cc: %016lx", result);
-		const unsigned int Z = 8, N = 4, C = 2, V = 1;
+		const unsigned int Z = 8, N = 4, V = 1;
 		unsigned int status = 0;
 		if (result == 0) {
 			status |= Z;
 		}
 		if (result & 0x80000000) {
 			status |= N;
-		}
-		if (result & 0x100000000ull) {
-			status |= C;
 		}
 		if (result != (int32_t)result) {
 			status |= V;

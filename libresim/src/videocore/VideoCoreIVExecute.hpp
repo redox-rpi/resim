@@ -586,16 +586,12 @@ private:
 				registers.setRegister(rd, a + b * 16);
 				break;
 			case OP_EXTS:
+				/* signext rd,ra,#n: sign-extend from bit n (as GCC emits
+				   signext r,7 for signed char and signext r,0 for -(x&1)) */
 				{
-					unsigned hibit = 1 << (b - 1);
-					unsigned mask = (1 << b) - 1;
-					if (a & hibit) {
-						registers.setRegister(rd,
-						  a | ~mask);
-					} else {
-						registers.setRegister(rd,
-						  a & mask);
-					}
+					unsigned sh = 31 - (b & 31);
+					registers.setRegister(rd,
+					  (uint32_t)((int32_t)(a << sh) >> sh));
 				}
 				break;
 			case OP_NEG:
